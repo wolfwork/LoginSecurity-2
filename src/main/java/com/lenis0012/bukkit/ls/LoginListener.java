@@ -2,6 +2,7 @@ package com.lenis0012.bukkit.ls;
 
 import org.apache.commons.lang.RandomStringUtils;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -20,10 +21,13 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerPickupItemEvent;
 import org.bukkit.event.player.PlayerPreLoginEvent.Result;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 
-import com.lenis0012.bukkit.ls.data.MySQL;
-import com.lenis0012.bukkit.ls.data.SQLite;
+import com.lenis0012.bukkit.ls.data.UUIDConverter;
 import com.lenis0012.bukkit.ls.util.StringUtil;
+import com.lenis0012.bukkit.ls.util.Updater;
+import com.lenis0012.bukkit.ls.util.Updater.UpdateResult;
+
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
@@ -45,8 +49,7 @@ public class LoginListener implements Listener {
 	@EventHandler(priority = EventPriority.MONITOR)
 	public void onPlayerJoin(PlayerJoinEvent event) {
 		final Player player = event.getPlayer();
-		
-		if(MySQL.IS_CONVERTING || SQLite.IS_CONVERTING) {
+		if(UUIDConverter.IS_CONVERTING) {
 			player.kickPlayer("The server is currently converting all login data, please join back later.");
 			return;
 		} if (!player.getName().equals(StringUtil.cleanString(player.getName()))) {
@@ -55,6 +58,24 @@ public class LoginListener implements Listener {
 		}
 
 		plugin.playerJoinPrompt(player);
+		if(player.hasPermission("ls.admin")) {
+			Bukkit.getScheduler().runTaskLater(plugin, new Runnable() {
+
+				@Override
+				public void run() {
+					Updater updater = plugin.getUpdater();
+					if (updater != null) {
+						if(updater.getResult() == UpdateResult.UPDATE_AVAILABLE) {
+							player.sendMessage(ChatColor.translateAlternateColorCodes('&', String.format(
+								"&aA new &7%s &7build for LoginSecurtiy was found, you can get &7%s &afor &7%s &aon BukkitDev!",
+								updater.getLatestType().toString().toLowerCase(),
+								updater.getLatestName(),
+								updater.getLatestGameVersion())));
+						}
+					}
+				}
+			}, 20L);
+		}
 	}
 
 	@EventHandler(priority = EventPriority.LOWEST)
@@ -76,20 +97,33 @@ public class LoginListener implements Listener {
 
 	@EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
 	public void onPlayerQuit(PlayerQuitEvent event) {
-		if(MySQL.IS_CONVERTING || SQLite.IS_CONVERTING) {
+		if(UUIDConverter.IS_CONVERTING) {
 			return;
 		}
-		
+
 		Player player = event.getPlayer();
 		String name = player.getName().toLowerCase();
 		String uuid = player.getUniqueId().toString().replaceAll("-", "");
 		String ip = player.getAddress().getAddress().toString();
 
-		if (plugin.data.isRegistered(uuid)) {
+		if(plugin.authList.containsKey(name) && plugin.spawntp && plugin.loginLocations.containsKey(name)) {
+			player.teleport(plugin.loginLocations.remove(name));
+		} if (plugin.data.isRegistered(uuid)) {
 			plugin.data.updateIp(uuid, ip);
 			if (plugin.sesUse && !plugin.authList.containsKey(name)) {
 				plugin.thread.getSession().put(name, plugin.sesDelay);
 			}
+		}
+
+		plugin.authList.remove(name);
+	}
+
+	@EventHandler(priority = EventPriority.MONITOR)
+	public void onPlayerRespawn(PlayerRespawnEvent event) {
+		Player player = event.getPlayer();
+		String name = player.getName().toLowerCase();
+		if(plugin.loginLocations.containsKey(name)) {
+			plugin.loginLocations.put(name, event.getRespawnLocation());
 		}
 	}
 
@@ -157,7 +191,7 @@ public class LoginListener implements Listener {
 	}
 
 	@EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
-	public void OnHealthRegain(EntityRegainHealthEvent event) {
+	public void onHealthRegain(EntityRegainHealthEvent event) {
 		Entity entity = event.getEntity();
 		if (!(entity instanceof Player)) {
 			return;
@@ -171,7 +205,7 @@ public class LoginListener implements Listener {
 	}
 
 	@EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
-	public void OnFoodLevelChange(FoodLevelChangeEvent event) {
+	public void onFoodLevelChange(FoodLevelChangeEvent event) {
 		Entity entity = event.getEntity();
 		if (!(entity instanceof Player)) {
 			return;
